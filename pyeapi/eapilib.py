@@ -58,6 +58,8 @@ except ImportError:
     # Use Python 2.7 import as a fallback
     from httplib import HTTPConnection, HTTPSConnection
 
+import websocket
+
 from pyeapi.utils import make_iterable
 
 _LOGGER = logging.getLogger(__name__)
@@ -168,6 +170,13 @@ class ConnectionError(EapiError):
         self.connection_type = connection_type
         self.commands = commands
         super(ConnectionError, self).__init__(message)
+
+class WebsocketConnection(object):
+    def __init__(self, url, timeout=None, class_=websocket.WebSocket, **options):
+        self.ws = websocket.create_connection(url, timeout=timeout, class_=class_, **options)
+
+    def __str__(self):
+        return self.url
 
 
 class SocketConnection(HTTPConnection):
@@ -565,6 +574,32 @@ class EapiConnection(object):
             exc.commands = commands
             self.error = exc
             raise
+
+
+class WebsocketEapiConnection(EapiConnection):
+    def __init__(self, uri=None, username=None, password=None, timeout=60, **kwargs):
+        super(WebsocketEapiConnection).__init__()
+        self.transport = websocket.create_connection(uri, timeout=timeout, **kwargs)
+        negotiationInfo = {
+            'connectionType': 'jsonrpc',
+            'authentication': {
+                'username': username,
+                'password': password,
+                }
+        }
+        self.transport.send(json.dumps(negotiationInfo))
+        result = json.loads(self.transport.recv())
+        if result["authentication"]["status"] != "success":
+            self.transport.close()
+            raise ConnectionError(str(self), result["authentication"]["message"])
+
+    def send(self, request):
+        self.transport.send(json.dumps({"request": request}))
+        response = json.loads(self.transport.recv())["response"]
+        return response
+
+    def close(self):
+        self.transport.close()
 
 
 class SocketEapiConnection(EapiConnection):
